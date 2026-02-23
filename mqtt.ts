@@ -24,7 +24,7 @@ export function publish(topic: string, message: string): Promise<void> {
       client.reconnect();
     }
 
-    client.publish(topic, message, (error) => {
+    client.publish(topic, message, { retain: true }, (error) => {
       if (error) {
         reject(error);
       } else {
