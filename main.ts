@@ -26,8 +26,10 @@ const LONGITUDE = parseFloat(Deno.env.get("LONGITUDE") || "0");
 const AREA_NAUTICAL_MILES = parseInt(
   Deno.env.get("AREA_NAUTICAL_MILES") || "3",
 );
-const LOOP_INTERVAL_MS = 30000; // 30 seconds
-const WEATHER_UPDATE_INTERVAL_MS = 1800000; // 30 minutes
+const AIRCRAFT_SCAN_MS = parseInt(Deno.env.get("AIRCRAFT_SCAN_MS") || "30000"); // 30 seconds
+const WEATHER_UPDATE_INTERVAL_MS = parseInt(
+  Deno.env.get("WEATHER_UPDATE_INTERVAL_MS") || "1800000",
+); // 30 minutes
 
 if (LATITUDE === 0 || LONGITUDE === 0) {
   logger.warn(
@@ -36,87 +38,89 @@ if (LATITUDE === 0 || LONGITUDE === 0) {
 }
 
 /**
- * Sleep for a specified duration
+ * Scan for airplanes, resolve flights, and publish changes.
+ * Reschedules itself via setTimeout.
  */
-function awaitTimeout(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+let previousAircraft: AircraftWithFlight[] | undefined;
+
+async function scanAirplanes(): Promise<void> {
+  try {
+    // Fetch all airplanes in the area
+    const aircraft = await fetchAirplanes(
+      LATITUDE,
+      LONGITUDE,
+      AREA_NAUTICAL_MILES,
+    );
+
+    // Extract flight numbers and resolve flight details
+    const flightNumbers = aircraft
+      .map((plane) => plane.flight)
+      .filter((flight) => flight && flight.trim() !== "");
+    const flights = await resolveFlights(flightNumbers);
+
+    // Merge aircraft with their flight details
+    const aircraftWithFlights: AircraftWithFlight[] = aircraft.map((
+      plane,
+    ) => ({
+      ...plane,
+      flightDetails: {
+        origin: flights[plane.flight]?.origin,
+        destination: flights[plane.flight]?.destination,
+      },
+    }));
+
+    // Only publish aircraft data when it has changed
+    if (!equals(aircraftWithFlights, previousAircraft)) {
+      await publishMqtt(
+        "flight_tracker/aircraft",
+        JSON.stringify(aircraftWithFlights),
+      );
+      previousAircraft = aircraftWithFlights;
+    }
+  } catch (error) {
+    logger.error("Error scanning airplanes: {error}", { error });
+  }
+
+  setTimeout(scanAirplanes, AIRCRAFT_SCAN_MS);
 }
 
 /**
- * Main loop - updates airplanes, resolves flights, and fetches weather
+ * Fetch weather data and publish changes.
+ * Reschedules itself via setTimeout.
  */
-async function main(): Promise<void> {
-  logger.info("Flight Tracker starting at {latitude}, {longitude}", {
-    latitude: LATITUDE,
-    longitude: LONGITUDE,
-  });
-  logger.info("Monitoring area: {area} nautical miles", {
-    area: AREA_NAUTICAL_MILES,
-  });
-  logger.info("Update interval: {interval} seconds", {
-    interval: LOOP_INTERVAL_MS / 1000,
-  });
+let previousWeather: WeatherData | undefined;
 
-  let lastWeatherUpdate = 0;
-  let previousAircraft: AircraftWithFlight[] | undefined;
-  let previousWeather: WeatherData | undefined;
-
-  while (true) {
-    try {
-      // Fetch all airplanes in the area
-      const aircraft = await fetchAirplanes(
-        LATITUDE,
-        LONGITUDE,
-        AREA_NAUTICAL_MILES,
+async function updateWeather(): Promise<void> {
+  try {
+    const weather = await fetchWeather(LATITUDE, LONGITUDE);
+    if (!equals(weather, previousWeather)) {
+      await publishMqtt(
+        "flight_tracker/weather",
+        JSON.stringify(weather),
       );
-
-      // Extract flight numbers and resolve flight details
-      const flightNumbers = aircraft
-        .map((plane) => plane.flight)
-        .filter((flight) => flight && flight.trim() !== "");
-      const flights = await resolveFlights(flightNumbers);
-
-      // Merge aircraft with their flight details
-      const aircraftWithFlights: AircraftWithFlight[] = aircraft.map((
-        plane,
-      ) => ({
-        ...plane,
-        flightDetails: {
-          origin: flights[plane.flight]?.origin,
-          destination: flights[plane.flight]?.destination,
-        },
-      }));
-
-      // Only publish aircraft data when it has changed
-      if (!equals(aircraftWithFlights, previousAircraft)) {
-        await publishMqtt(
-          "flight_tracker/aircraft",
-          JSON.stringify(aircraftWithFlights),
-        );
-        previousAircraft = aircraftWithFlights;
-      }
-
-      // Fetch weather data every 30 minutes, only publish if changed
-      const now = Date.now();
-      if (now - lastWeatherUpdate >= WEATHER_UPDATE_INTERVAL_MS) {
-        const weather = await fetchWeather(LATITUDE, LONGITUDE);
-        lastWeatherUpdate = now;
-        if (!equals(weather, previousWeather)) {
-          await publishMqtt(
-            "flight_tracker/weather",
-            JSON.stringify(weather),
-          );
-          previousWeather = weather;
-        }
-      }
-    } catch (error) {
-      logger.error("Error in main loop: {error}", { error });
+      previousWeather = weather;
     }
-
-    // Wait before next iteration
-    await awaitTimeout(LOOP_INTERVAL_MS);
+  } catch (error) {
+    logger.error("Error updating weather: {error}", { error });
   }
+
+  setTimeout(updateWeather, WEATHER_UPDATE_INTERVAL_MS);
 }
 
-// Start the main loop
-main();
+// Start both loops
+logger.info("Flight Tracker starting at {latitude}, {longitude}", {
+  latitude: LATITUDE,
+  longitude: LONGITUDE,
+});
+logger.info("Monitoring area: {area} nautical miles", {
+  area: AREA_NAUTICAL_MILES,
+});
+logger.info("Aircraft scan interval: {interval} seconds", {
+  interval: AIRCRAFT_SCAN_MS / 1000,
+});
+logger.info("Weather update interval: {interval} seconds", {
+  interval: WEATHER_UPDATE_INTERVAL_MS / 1000,
+});
+
+scanAirplanes();
+updateWeather();

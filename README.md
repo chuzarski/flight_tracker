@@ -8,18 +8,22 @@ Adafruit.
 ## Overview
 
 Flight Tracker monitors the airspace around a set of geographic coordinates
-within a configurable nautical mile radius. Every 30 seconds it:
+within a configurable nautical mile radius. It runs two independent async loops:
 
-1. **Scans for nearby aircraft** using the free Airplanes.live API to detect
-   planes in the area, capturing flight number, aircraft type, altitude, and
-   speed.
-2. **Resolves flight details** by looking up detected flight numbers against the
-   FlightAware AeroAPI to determine each flight's origin and destination
-   airports.
-3. **Fetches current weather** for the configured location every 30 minutes via
-   the Open-Meteo API (temperature, wind speed/direction, weather code).
-4. **Publishes changes via MQTT** — aircraft and weather data are only published
-   to the broker when the data has actually changed, keeping traffic minimal.
+1. **Aircraft scanning loop** (default: every 30 seconds) — Scans for nearby
+   aircraft using the free Airplanes.live API to detect planes in the area,
+   capturing flight number, aircraft type, altitude, and speed. Resolves flight
+   details by looking up detected flight numbers against the FlightAware AeroAPI
+   to determine each flight's origin and destination airports. Publishes changes
+   via MQTT only when aircraft data has changed.
+
+2. **Weather update loop** (default: every 30 minutes) — Fetches current weather
+   for the configured location via the Open-Meteo API (temperature, wind
+   speed/direction, relative humidity, precipitation, weather code). Publishes
+   changes via MQTT only when weather data has changed.
+
+Both loops run independently and handle errors gracefully without stopping the
+service.
 
 ### Why two aircraft APIs?
 
@@ -47,15 +51,17 @@ cached. Flight details are cached for 24 hours to further reduce API usage.
 
 ### Environment Variables
 
-| Variable              | Required | Default              | Description                                                       |
-| --------------------- | -------- | -------------------- | ----------------------------------------------------------------- |
-| `LATITUDE`            | Yes      | `0`                  | Latitude of the center point to monitor                           |
-| `LONGITUDE`           | Yes      | `0`                  | Longitude of the center point to monitor                          |
-| `AREA_NAUTICAL_MILES` | No       | `3`                  | Radius in nautical miles to scan for aircraft                     |
-| `MQTT_BROKER_URL`     | Yes      | —                    | MQTT broker connection URL (e.g. `mqtt://localhost:1883`)         |
-| `FLIGHTAWARE_API_KEY` | Yes      | —                    | FlightAware AeroAPI key                                           |
-| `LOG_LEVEL`           | No       | `info`               | Log level (`trace`, `debug`, `info`, `warning`, `error`, `fatal`) |
-| `LOG_FILE`            | No       | `flight_tracker.log` | Path to the log file                                              |
+| Variable                     | Required | Default              | Description                                                       |
+| ---------------------------- | -------- | -------------------- | ----------------------------------------------------------------- |
+| `LATITUDE`                   | Yes      | `0`                  | Latitude of the center point to monitor                           |
+| `LONGITUDE`                  | Yes      | `0`                  | Longitude of the center point to monitor                          |
+| `AREA_NAUTICAL_MILES`        | No       | `3`                  | Radius in nautical miles to scan for aircraft                     |
+| `AIRCRAFT_SCAN_MS`           | No       | `30000`              | Aircraft scan interval in milliseconds (30 seconds)               |
+| `WEATHER_UPDATE_INTERVAL_MS` | No       | `1800000`            | Weather update interval in milliseconds (30 minutes)              |
+| `MQTT_BROKER_URL`            | Yes      | —                    | MQTT broker connection URL (e.g. `mqtt://localhost:1883`)         |
+| `FLIGHTAWARE_API_KEY`        | Yes      | —                    | FlightAware AeroAPI key                                           |
+| `LOG_LEVEL`                  | No       | `info`               | Log level (`trace`, `debug`, `info`, `warning`, `error`, `fatal`) |
+| `LOG_FILE`                   | No       | `flight_tracker.log` | Path to the log file                                              |
 
 ### Run Locally
 
@@ -91,7 +97,7 @@ docker run -d \
 
 ### MQTT Topics
 
-| Topic                     | Payload                                                         | Update Frequency             |
-| ------------------------- | --------------------------------------------------------------- | ---------------------------- |
-| `flight_tracker/aircraft` | JSON array of aircraft with flight details (origin/destination) | Every 30s (only on change)   |
-| `flight_tracker/weather`  | JSON object with current weather conditions                     | Every 30min (only on change) |
+| Topic                     | Payload                                                                                               | Update Frequency                                    |
+| ------------------------- | ----------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
+| `flight_tracker/aircraft` | JSON array of aircraft with flight details (origin/destination)                                       | Configurable (default: every 30s, only on change)   |
+| `flight_tracker/weather`  | JSON object with current weather (temperature, wind, humidity, precipitation, weather condition/code) | Configurable (default: every 30min, only on change) |

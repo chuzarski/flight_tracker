@@ -2,12 +2,42 @@ import { fetchWeatherApi } from "openmeteo";
 
 export interface WeatherData {
   current: {
+    /**
+     * The time of the weather data, adjusted for the location's UTC offset.
+     */
     time: Date;
+    /**
+     * The current temperature in Fahrenheit.
+     */
     temperature: number;
+    /**
+     * The WMO weather code representing the current weather condition, which can be mapped to a human-readable string using the getWeatherCondition function.
+     */
     weatherCode: number;
+    /**
+     * The current weather condition as a human-readable string.
+     */
+    weatherCondition: string;
+    /**
+     * The current wind speed in miles per hour.
+     */
     windSpeed: number;
+    /**
+     * The current wind direction in degrees, which can be converted to a compass direction using the getCompassDirection function.
+     */
     windDirection: number;
-    condition: string;
+    /**
+     * The current wind direction as a compass heading.
+     */
+    windDirectionHeading: string;
+    /**
+     * The current relative humidity as a percentage.
+     */
+    relativeHumidity: number;
+    /**
+     * The current precipitation in inches.
+     */
+    precipitation: number;
   };
   location: {
     latitude: number;
@@ -49,6 +79,40 @@ const WMO_CONDITION_MAP = {
   99: "Heavy thunderstorm",
 } as const;
 
+const COMPASS_DIRECTIONS = [
+  "N",
+  "NNE",
+  "NE",
+  "ENE",
+  "E",
+  "ESE",
+  "SE",
+  "SSE",
+  "S",
+  "SSW",
+  "SW",
+  "WSW",
+  "W",
+  "WNW",
+  "NW",
+  "NNW",
+] as const;
+
+/**
+ * Converts degrees to the corresponding compass direction.
+ * @param degrees - The wind direction in degrees.
+ * @returns The compass direction as a string.
+ */
+export const getCompassDirection = (degrees: number): string => {
+  const index = Math.round(degrees / 22.5) % 16;
+  return COMPASS_DIRECTIONS[index];
+};
+
+/**
+ * Converts WMO weather code to a human-readable condition string.
+ * @param code - The WMO weather code.
+ * @returns The corresponding weather condition as a string.
+ */
 export const getWeatherCondition = (code: number): string =>
   code in WMO_CONDITION_MAP
     ? WMO_CONDITION_MAP[code as keyof typeof WMO_CONDITION_MAP]
@@ -61,7 +125,14 @@ export async function fetchWeather(
   const params = {
     latitude: [latitude],
     longitude: [longitude],
-    current: "temperature_2m,weather_code,wind_speed_10m,wind_direction_10m",
+    current: [
+      "temperature_2m",
+      "weather_code",
+      "wind_speed_10m",
+      "wind_direction_10m",
+      "relative_humidity_2m",
+      "precipitation",
+    ],
     temperature_unit: "fahrenheit",
     windspeed_unit: "mph",
   };
@@ -85,9 +156,12 @@ export async function fetchWeather(
       time: new Date((Number(current.time()) + utcOffsetSeconds) * 1000),
       temperature: current.variables(0)!.value(),
       weatherCode: current.variables(1)!.value(),
+      weatherCondition: getWeatherCondition(current.variables(1)!.value()),
       windSpeed: current.variables(2)!.value(),
       windDirection: current.variables(3)!.value(),
-      condition: getWeatherCondition(current.variables(1)!.value()),
+      windDirectionHeading: getCompassDirection(current.variables(3)!.value()),
+      relativeHumidity: current.variables(4)!.value(),
+      precipitation: current.variables(5)!.value(),
     },
     location: {
       latitude: lat,
